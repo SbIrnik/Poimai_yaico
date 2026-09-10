@@ -580,39 +580,11 @@ function App() {
       {/* Game Area */}
       <div
         ref={gameAreaRef}
-        className={`relative w-full max-w-2xl flex-1 mx-4 mb-4 rounded-2xl overflow-hidden border-2 shadow-2xl transition-all duration-150 ${
-          isInvulnerable && invulnerableFlash
-            ? 'border-yellow-400 shadow-yellow-400/60'
-            : isInvulnerable
-            ? 'border-green-400 shadow-green-400/40'
-            : 'border-white/20'
-        }`}
+        className="relative w-full max-w-2xl flex-1 mx-4 mb-4 rounded-2xl overflow-hidden border-2 border-white/20 shadow-2xl"
         style={{
-          background: isInvulnerable && invulnerableFlash
-            ? 'linear-gradient(180deg, rgba(250,204,21,0.15) 0%, rgba(34,197,94,0.15) 50%, rgba(34,197,94,0.3) 100%)'
-            : 'linear-gradient(180deg, rgba(30,41,59,0.8) 0%, rgba(51,65,85,0.6) 50%, rgba(34,197,94,0.3) 100%)',
+          background: 'linear-gradient(180deg, rgba(30,41,59,0.8) 0%, rgba(51,65,85,0.6) 50%, rgba(34,197,94,0.3) 100%)',
         }}
       >
-        {/* Invulnerability overlay */}
-        {isInvulnerable && (
-          <div
-            className="absolute inset-0 pointer-events-none z-10 transition-opacity duration-150"
-            style={{
-              background: invulnerableFlash
-                ? 'radial-gradient(circle at center, rgba(250,204,21,0.12) 0%, transparent 60%)'
-                : 'radial-gradient(circle at center, rgba(34,197,94,0.08) 0%, transparent 60%)',
-              boxShadow: invulnerableFlash
-                ? 'inset 0 0 40px rgba(250,204,21,0.25)'
-                : 'inset 0 0 40px rgba(34,197,94,0.15)',
-            }}
-          />
-        )}
-        {/* Invulnerability indicator */}
-        {isInvulnerable && (
-          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none flex items-center gap-2 bg-black/50 backdrop-blur-sm px-3 py-1 rounded-full border border-yellow-400/50">
-            <span className="text-yellow-300 text-xs font-bold animate-pulse">🛡️ НЕУЯЗВИМОСТЬ</span>
-          </div>
-        )}
         {/* Screen flash effect */}
         {screenFlash && (
           <div
