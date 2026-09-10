@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-type ItemType = 'egg' | 'heart' | 'golden_egg' | 'star';
+type ItemType = 'egg' | 'bronze' | 'silver' | 'gold' | 'black' | 'heart' | 'star';
 
 interface FallingItem {
   id: number;
@@ -44,29 +44,44 @@ const GAME_CONFIG = {
   MAX_SPEED: 6,
   BASKET_SPEED: 8,
   LEVEL_THRESHOLD: 10,
-  // Шансы появления бонусов (из 100)
-  HEART_CHANCE: 8,        // 8% шанс сердечка
-  GOLDEN_EGG_CHANCE: 5,   // 5% шанс золотого яйца
-  STAR_CHANCE: 3,         // 3% шанс звезды
-  // Эффекты бонусов
-  HEART_HEAL: 1,          // Восстанавливает 1 жизнь
-  GOLDEN_EGG_POINTS: 5,   // Даёт 5 очков
-  STAR_POINTS: 10,        // Даёт 10 очков + 1 жизнь
+  // Шансы появления (из 100)
+  BRONZE_CHANCE: 8,
+  SILVER_CHANCE: 5,
+  GOLD_CHANCE: 3,
+  BLACK_CHANCE: 7,
+  HEART_CHANCE: 6,
+  STAR_CHANCE: 3,
+  // Очки за каждое яйцо
+  EGG_POINTS: 1,
+  BRONZE_POINTS: 2,
+  SILVER_POINTS: 3,
+  GOLD_POINTS: 5,
+  BLACK_POINTS: -3,
+  STAR_POINTS: 10,
+  HEART_HEAL: 1,
 };
 
 const ITEM_EMOJI: Record<ItemType, string> = {
   egg: '🥚',
+  bronze: '🥚',
+  silver: '🥚',
+  gold: '🥚',
+  black: '🥚',
   heart: '❤️',
-  golden_egg: '🌟',
   star: '⭐',
 };
 
-const ITEM_SIZE_MULTIPLIER: Record<ItemType, number> = {
-  egg: 1,
-  heart: 1.1,
-  golden_egg: 1.2,
-  star: 1.15,
+const ITEM_CSS_FILTER: Record<ItemType, string> = {
+  egg: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
+  bronze: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3)) sepia(1) saturate(3) hue-rotate(-15deg) brightness(0.85)',
+  silver: 'drop-shadow(0 2px 6px rgba(192,192,192,0.5)) grayscale(1) brightness(1.6) contrast(0.9)',
+  gold: 'drop-shadow(0 0 8px rgba(255,215,0,0.7)) sepia(1) saturate(5) hue-rotate(10deg) brightness(1.3)',
+  black: 'drop-shadow(0 0 6px rgba(100,0,0,0.6)) brightness(0) invert(0) saturate(0) contrast(2)',
+  heart: 'drop-shadow(0 0 8px rgba(239,68,68,0.8)) drop-shadow(0 0 16px rgba(239,68,68,0.4))',
+  star: 'drop-shadow(0 0 10px rgba(250,204,21,0.9)) drop-shadow(0 0 20px rgba(250,204,21,0.5))',
 };
+
+
 
 function App() {
   const gameAreaRef = useRef<HTMLDivElement>(null);
@@ -104,9 +119,26 @@ function App() {
 
   const getRandomItemType = (): ItemType => {
     const roll = Math.random() * 100;
-    if (roll < GAME_CONFIG.STAR_CHANCE) return 'star';
-    if (roll < GAME_CONFIG.STAR_CHANCE + GAME_CONFIG.GOLDEN_EGG_CHANCE) return 'golden_egg';
-    if (roll < GAME_CONFIG.STAR_CHANCE + GAME_CONFIG.GOLDEN_EGG_CHANCE + GAME_CONFIG.HEART_CHANCE) return 'heart';
+    let cumulative = 0;
+
+    cumulative += GAME_CONFIG.STAR_CHANCE;
+    if (roll < cumulative) return 'star';
+
+    cumulative += GAME_CONFIG.GOLD_CHANCE;
+    if (roll < cumulative) return 'gold';
+
+    cumulative += GAME_CONFIG.SILVER_CHANCE;
+    if (roll < cumulative) return 'silver';
+
+    cumulative += GAME_CONFIG.BRONZE_CHANCE;
+    if (roll < cumulative) return 'bronze';
+
+    cumulative += GAME_CONFIG.BLACK_CHANCE;
+    if (roll < cumulative) return 'black';
+
+    cumulative += GAME_CONFIG.HEART_CHANCE;
+    if (roll < cumulative) return 'heart';
+
     return 'egg';
   };
 
@@ -114,11 +146,12 @@ function App() {
     const { width } = getGameArea();
     const level = gameState.level;
     const type = getRandomItemType();
-    const isBonus = type !== 'egg';
+    const isSpecial = type !== 'egg';
     const baseSpeed = GAME_CONFIG.BASE_SPEED + Math.random() * (GAME_CONFIG.MAX_SPEED - GAME_CONFIG.BASE_SPEED) * (1 + level * 0.15);
     // Бонусы падают чуть медленнее, чтобы их было легче поймать
-    const speed = isBonus ? baseSpeed * 0.7 : baseSpeed;
-    const size = GAME_CONFIG.EGG_SIZE * ITEM_SIZE_MULTIPLIER[type] + Math.random() * 8 - 4;
+    // Чёрные яйца падают с обычной скоростью — их надо избегать!
+    const speed = (isSpecial && type !== 'black') ? baseSpeed * 0.75 : baseSpeed;
+    const size = GAME_CONFIG.EGG_SIZE + Math.random() * 8 - 4;
 
     const newItem: FallingItem = {
       id: itemIdCounter.current++,
@@ -127,9 +160,9 @@ function App() {
       speed,
       size,
       rotation: Math.random() * 360,
-      rotationSpeed: (Math.random() - 0.5) * (isBonus ? 2 : 4),
+      rotationSpeed: (Math.random() - 0.5) * (isSpecial ? 2 : 4),
       type,
-      glow: isBonus,
+      glow: isSpecial,
     };
 
     itemsRef.current = [...itemsRef.current, newItem];
@@ -186,8 +219,11 @@ function App() {
 
     // Update items
     let eggsCaught = 0;
+    let bronzeCaught = 0;
+    let silverCaught = 0;
+    let goldCaught = 0;
+    let blackCaught = 0;
     let heartsCaught = 0;
-    let goldenEggsCaught = 0;
     let starsCaught = 0;
     let missed = 0;
     let missX = 0;
@@ -203,16 +239,34 @@ function App() {
             eggsCaught++;
             addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'egg', '+1');
             break;
+          case 'bronze':
+            bronzeCaught++;
+            addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'bronze', '+2');
+            setScreenFlash('bronze');
+            setTimeout(() => setScreenFlash(null), 250);
+            break;
+          case 'silver':
+            silverCaught++;
+            addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'silver', '+3');
+            setScreenFlash('silver');
+            setTimeout(() => setScreenFlash(null), 250);
+            break;
+          case 'gold':
+            goldCaught++;
+            addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'gold', '+5');
+            setScreenFlash('gold');
+            setTimeout(() => setScreenFlash(null), 300);
+            break;
+          case 'black':
+            blackCaught++;
+            addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'black', '-3');
+            setScreenFlash('black');
+            setTimeout(() => setScreenFlash(null), 350);
+            break;
           case 'heart':
             heartsCaught++;
             addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'heart', '+❤️');
             setScreenFlash('pink');
-            setTimeout(() => setScreenFlash(null), 300);
-            break;
-          case 'golden_egg':
-            goldenEggsCaught++;
-            addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'golden_egg', '+5⭐');
-            setScreenFlash('gold');
             setTimeout(() => setScreenFlash(null), 300);
             break;
           case 'star':
@@ -239,18 +293,22 @@ function App() {
 
     setItems([...itemsRef.current]);
 
-    const totalCaught = eggsCaught + heartsCaught + goldenEggsCaught + starsCaught;
+    const totalCaught = eggsCaught + bronzeCaught + silverCaught + goldCaught + blackCaught + heartsCaught + starsCaught;
     if (totalCaught > 0 || missed > 0) {
       setGameState((prev) => {
         // Подсчёт очков
-        const pointsFromEggs = eggsCaught * 1;
-        const pointsFromGolden = goldenEggsCaught * GAME_CONFIG.GOLDEN_EGG_POINTS;
+        const pointsFromEggs = eggsCaught * GAME_CONFIG.EGG_POINTS;
+        const pointsFromBronze = bronzeCaught * GAME_CONFIG.BRONZE_POINTS;
+        const pointsFromSilver = silverCaught * GAME_CONFIG.SILVER_POINTS;
+        const pointsFromGold = goldCaught * GAME_CONFIG.GOLD_POINTS;
+        const pointsFromBlack = blackCaught * GAME_CONFIG.BLACK_POINTS;
         const pointsFromStars = starsCaught * GAME_CONFIG.STAR_POINTS;
-        const newScore = prev.score + pointsFromEggs + pointsFromGolden + pointsFromStars;
+        const rawScore = prev.score + pointsFromEggs + pointsFromBronze + pointsFromSilver + pointsFromGold + pointsFromBlack + pointsFromStars;
+        const newScore = Math.max(0, rawScore); // Счёт не может быть отрицательным
 
         // Подсчёт жизней
         const healFromHearts = heartsCaught * GAME_CONFIG.HEART_HEAL;
-        const healFromStars = starsCaught * 1; // Звезда тоже лечит
+        const healFromStars = starsCaught * 1;
         const totalHeal = healFromHearts + healFromStars;
         const newLives = Math.min(prev.maxLives, prev.lives - missed + totalHeal);
         const newLevel = Math.floor(newScore / GAME_CONFIG.LEVEL_THRESHOLD) + 1;
@@ -386,8 +444,8 @@ function App() {
     return () => window.removeEventListener('resize', initPosition);
   }, [getGameArea]);
 
-  const getItemStyle = (item: FallingItem) => {
-    const baseStyle = {
+  const getItemStyle = (item: FallingItem): React.CSSProperties => {
+    const baseStyle: React.CSSProperties = {
       left: item.x + 'px',
       top: item.y + 'px',
       width: item.size + 'px',
@@ -398,22 +456,48 @@ function App() {
     };
 
     if (item.glow) {
-      const glowColors: Record<string, string> = {
-        heart: 'drop-shadow(0 0 8px rgba(239,68,68,0.8)) drop-shadow(0 0 16px rgba(239,68,68,0.4))',
-        golden_egg: 'drop-shadow(0 0 10px rgba(234,179,8,0.9)) drop-shadow(0 0 20px rgba(234,179,8,0.5))',
-        star: 'drop-shadow(0 0 10px rgba(250,204,21,0.9)) drop-shadow(0 0 20px rgba(250,204,21,0.5))',
-      };
       return {
         ...baseStyle,
-        filter: glowColors[item.type] || 'none',
-        animation: 'pulse 1s ease-in-out infinite',
+        filter: ITEM_CSS_FILTER[item.type],
+        animation: item.type === 'black' ? 'pulseDark 0.8s ease-in-out infinite' : 'pulse 1s ease-in-out infinite',
       };
     }
 
     return {
       ...baseStyle,
-      filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
+      filter: ITEM_CSS_FILTER[item.type],
     };
+  };
+
+  const getFlashStyle = (flash: string): React.CSSProperties => {
+    switch (flash) {
+      case 'pink':
+        return { background: 'radial-gradient(circle, rgba(239,68,68,0.3) 0%, transparent 70%)' };
+      case 'gold':
+        return { background: 'radial-gradient(circle, rgba(234,179,8,0.3) 0%, transparent 70%)' };
+      case 'yellow':
+        return { background: 'radial-gradient(circle, rgba(250,204,21,0.4) 0%, transparent 70%)' };
+      case 'bronze':
+        return { background: 'radial-gradient(circle, rgba(205,127,50,0.3) 0%, transparent 70%)' };
+      case 'silver':
+        return { background: 'radial-gradient(circle, rgba(192,192,192,0.3) 0%, transparent 70%)' };
+      case 'black':
+        return { background: 'radial-gradient(circle, rgba(80,0,0,0.5) 0%, transparent 70%)' };
+      default:
+        return {};
+    }
+  };
+
+  const getEffectColor = (type: ItemType): string => {
+    switch (type) {
+      case 'heart': return 'text-red-400';
+      case 'gold': return 'text-yellow-400';
+      case 'silver': return 'text-gray-200';
+      case 'bronze': return 'text-amber-600';
+      case 'star': return 'text-amber-300';
+      case 'black': return 'text-red-600';
+      default: return 'text-green-400';
+    }
   };
 
   return (
@@ -475,13 +559,7 @@ function App() {
         {screenFlash && (
           <div
             className="absolute inset-0 z-30 pointer-events-none animate-pulse"
-            style={{
-              background: screenFlash === 'pink'
-                ? 'radial-gradient(circle, rgba(239,68,68,0.3) 0%, transparent 70%)'
-                : screenFlash === 'gold'
-                ? 'radial-gradient(circle, rgba(234,179,8,0.3) 0%, transparent 70%)'
-                : 'radial-gradient(circle, rgba(250,204,21,0.4) 0%, transparent 70%)',
-            }}
+            style={getFlashStyle(screenFlash)}
           />
         )}
 
@@ -510,13 +588,8 @@ function App() {
               animation: 'floatUp 0.8s ease-out forwards',
             }}
           >
-            <div className={`text-lg font-bold whitespace-nowrap ${
-              effect.type === 'heart' ? 'text-red-400' :
-              effect.type === 'golden_egg' ? 'text-yellow-400' :
-              effect.type === 'star' ? 'text-amber-300' :
-              'text-green-400'
-            }`}
-            style={{ textShadow: '0 0 10px currentColor' }}
+            <div className={`text-lg font-bold whitespace-nowrap ${getEffectColor(effect.type)}`}
+              style={{ textShadow: '0 0 10px currentColor' }}
             >
               {effect.text}
             </div>
@@ -551,54 +624,66 @@ function App() {
 
         {/* Start Screen */}
         {!gameState.isPlaying && !gameState.isGameOver && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm z-20">
-            <div className="text-center p-6 max-w-md mx-4">
-              <div className="text-6xl mb-4 animate-bounce">🥚</div>
-              <h1 className="text-3xl md:text-5xl font-bold text-white mb-3 drop-shadow-lg">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm z-20 overflow-y-auto">
+            <div className="text-center p-5 max-w-md mx-4">
+              <div className="text-5xl mb-3 animate-bounce">🥚</div>
+              <h1 className="text-3xl md:text-4xl font-bold text-white mb-2 drop-shadow-lg">
                 Поймай Яйцо!
               </h1>
-              <p className="text-white/80 text-base mb-4">
+              <p className="text-white/80 text-sm mb-3">
                 Лови яйца корзиной, не дай им упасть!
               </p>
               
               {/* Bonus items legend */}
-              <div className="bg-white/10 rounded-xl p-3 mb-5 border border-white/20">
-                <p className="text-white/70 text-xs mb-2 font-medium">✨ Бонусные предметы:</p>
-                <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="bg-white/10 rounded-xl p-3 mb-4 border border-white/20">
+                <p className="text-white/70 text-xs mb-2 font-medium">✨ Виды яиц и бонусов:</p>
+                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
                   <div className="flex items-center gap-2">
-                    <span className="text-lg">❤️</span>
-                    <span className="text-white/80 text-xs">+1 жизнь</span>
+                    <span className="text-base">🥚</span>
+                    <span className="text-white/80 text-xs">Обычное — +1</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-lg">🌟</span>
-                    <span className="text-white/80 text-xs">+5 очков</span>
+                    <span className="text-base" style={{ filter: ITEM_CSS_FILTER.bronze }}>🥚</span>
+                    <span className="text-amber-400 text-xs">Бронзовое — +2</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-lg">⭐</span>
-                    <span className="text-white/80 text-xs">+10 очков +❤️</span>
+                    <span className="text-base" style={{ filter: ITEM_CSS_FILTER.silver }}>🥚</span>
+                    <span className="text-gray-200 text-xs">Серебряное — +3</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="text-lg">🥚</span>
-                    <span className="text-white/80 text-xs">+1 очко</span>
+                    <span className="text-base" style={{ filter: ITEM_CSS_FILTER.gold }}>🥚</span>
+                    <span className="text-yellow-400 text-xs">Золотое — +5</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base" style={{ filter: ITEM_CSS_FILTER.black }}>🥚</span>
+                    <span className="text-red-400 text-xs">Чёрное — -3 ⚠️</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">❤️</span>
+                    <span className="text-red-300 text-xs">Сердце — +жизнь</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">⭐</span>
+                    <span className="text-amber-300 text-xs">Звезда — +10 +❤️</span>
                   </div>
                 </div>
               </div>
 
-              <p className="text-white/60 text-sm mb-5">
+              <p className="text-white/60 text-xs mb-4">
                 ← → или касание для управления
               </p>
               {gameState.highScore > 0 && (
-                <p className="text-yellow-300 text-lg mb-4">
+                <p className="text-yellow-300 text-base mb-3">
                   🏆 Рекорд: {gameState.highScore}
                 </p>
               )}
               <button
                 onClick={startGame}
-                className="px-8 py-4 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-xl font-bold rounded-2xl shadow-lg hover:scale-105 active:scale-95 transition-transform duration-150 hover:shadow-green-500/50 hover:shadow-xl"
+                className="px-7 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white text-lg font-bold rounded-2xl shadow-lg hover:scale-105 active:scale-95 transition-transform duration-150 hover:shadow-green-500/50 hover:shadow-xl"
               >
                 🎮 Начать игру
               </button>
-              <p className="text-white/40 text-xs mt-3">
+              <p className="text-white/40 text-xs mt-2">
                 или нажмите Пробел
               </p>
             </div>
@@ -666,6 +751,16 @@ function App() {
           }
           50% {
             transform: scale(1.15);
+          }
+        }
+        @keyframes pulseDark {
+          0%, 100% {
+            transform: scale(1);
+            filter: brightness(0) drop-shadow(0 0 6px rgba(150,0,0,0.6));
+          }
+          50% {
+            transform: scale(1.1);
+            filter: brightness(0) drop-shadow(0 0 12px rgba(200,0,0,0.9));
           }
         }
       `}</style>
