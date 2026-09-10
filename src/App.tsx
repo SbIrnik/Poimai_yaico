@@ -232,6 +232,7 @@ function App() {
     let starsCaught = 0;
     let missed = 0;
     let missX = 0;
+    let lifeLostThisFrame = false; // Отслеживаем, была ли уже потеря жизни в этом кадре
 
     itemsRef.current = itemsRef.current.filter((item) => {
       item.y += item.speed;
@@ -288,9 +289,11 @@ function App() {
       if (item.y > height) {
         if (item.type === 'egg') {
           const isInvulnerableNow = Date.now() < invulnerableUntilRef.current;
-          if (!isInvulnerableNow) {
+          // Проверяем неуязвимость И не теряли ли уже жизнь в этом кадре
+          if (!isInvulnerableNow && !lifeLostThisFrame) {
             missed++;
             missX = item.x;
+            lifeLostThisFrame = true; // После первой потери жизни в этом кадре активируем "мини-неуязвимость"
           }
         }
         return false;
@@ -314,17 +317,18 @@ function App() {
         const rawScore = prev.score + pointsFromEggs + pointsFromBronze + pointsFromSilver + pointsFromGold + pointsFromBlack + pointsFromStars;
         const newScore = Math.max(0, rawScore); // Счёт не может быть отрицательным
 
-        // Подсчёт жизней
+        // Подсчёт жизней - отнимаем только 1 жизнь за кадр, даже если пропущено несколько яиц
         const healFromHearts = heartsCaught * GAME_CONFIG.HEART_HEAL;
         const healFromStars = starsCaught * 1;
         const totalHeal = healFromHearts + healFromStars;
-        const newLives = Math.min(prev.maxLives, prev.lives - missed + totalHeal);
+        const livesLost = missed > 0 ? 1 : 0; // Теряем только 1 жизнь за кадр
+        const newLives = Math.min(prev.maxLives, prev.lives - livesLost + totalHeal);
         const newLevel = Math.floor(newScore / GAME_CONFIG.LEVEL_THRESHOLD) + 1;
 
         if (missed > 0) {
           setMissEffect({ x: missX, id: Date.now() });
           setTimeout(() => setMissEffect(null), 500);
-          // Активируем неуязвимость после потери жизни
+          // СРАЗУ активируем неуязвимость после потери жизни
           invulnerableUntilRef.current = Date.now() + GAME_CONFIG.INVULNERABLE_DURATION;
           setIsInvulnerable(true);
           setTimeout(() => {
@@ -458,7 +462,7 @@ function App() {
     }
     const interval = setInterval(() => {
       setInvulnerableFlash(prev => !prev);
-    }, 200);
+    }, 150);
     return () => clearInterval(interval);
   }, [isInvulnerable]);
 
@@ -638,7 +642,7 @@ function App() {
 
         {/* Basket */}
         <div
-          className="absolute transition-none"
+          className="absolute"
           style={{
             left: basketX + 'px',
             bottom: '12px',
@@ -646,7 +650,8 @@ function App() {
             height: GAME_CONFIG.BASKET_HEIGHT + 'px',
             fontSize: '52px',
             lineHeight: 1,
-            opacity: isInvulnerable ? (invulnerableFlash ? 1 : 0.4) : 1,
+            transition: 'opacity 0.15s ease-in-out, filter 0.15s ease-in-out',
+            opacity: isInvulnerable ? (invulnerableFlash ? 1 : 0.3) : 1,
             filter: isInvulnerable
               ? invulnerableFlash
                 ? 'drop-shadow(0 0 12px rgba(250,204,21,0.9)) drop-shadow(0 4px 6px rgba(0,0,0,0.4))'
