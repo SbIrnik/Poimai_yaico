@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-interface Egg {
+type ItemType = 'egg' | 'heart' | 'golden_egg' | 'star';
+
+interface FallingItem {
   id: number;
   x: number;
   y: number;
@@ -8,15 +10,26 @@ interface Egg {
   size: number;
   rotation: number;
   rotationSpeed: number;
+  type: ItemType;
+  glow: boolean;
 }
 
 interface GameState {
   score: number;
   lives: number;
+  maxLives: number;
   isPlaying: boolean;
   isGameOver: boolean;
   level: number;
   highScore: number;
+}
+
+interface BonusEffect {
+  x: number;
+  y: number;
+  id: number;
+  type: ItemType;
+  text: string;
 }
 
 const GAME_CONFIG = {
@@ -24,37 +37,62 @@ const GAME_CONFIG = {
   BASKET_HEIGHT: 60,
   EGG_SIZE: 36,
   INITIAL_LIVES: 3,
+  MAX_LIVES: 5,
   EGG_SPAWN_INTERVAL: 1200,
   MIN_SPAWN_INTERVAL: 400,
   BASE_SPEED: 2,
   MAX_SPEED: 6,
   BASKET_SPEED: 8,
   LEVEL_THRESHOLD: 10,
+  // Шансы появления бонусов (из 100)
+  HEART_CHANCE: 8,        // 8% шанс сердечка
+  GOLDEN_EGG_CHANCE: 5,   // 5% шанс золотого яйца
+  STAR_CHANCE: 3,         // 3% шанс звезды
+  // Эффекты бонусов
+  HEART_HEAL: 1,          // Восстанавливает 1 жизнь
+  GOLDEN_EGG_POINTS: 5,   // Даёт 5 очков
+  STAR_POINTS: 10,        // Даёт 10 очков + 1 жизнь
+};
+
+const ITEM_EMOJI: Record<ItemType, string> = {
+  egg: '🥚',
+  heart: '❤️',
+  golden_egg: '🌟',
+  star: '⭐',
+};
+
+const ITEM_SIZE_MULTIPLIER: Record<ItemType, number> = {
+  egg: 1,
+  heart: 1.1,
+  golden_egg: 1.2,
+  star: 1.15,
 };
 
 function App() {
   const gameAreaRef = useRef<HTMLDivElement>(null);
   const animationFrameRef = useRef<number>(0);
   const lastSpawnRef = useRef<number>(0);
-  const eggsRef = useRef<Egg[]>([]);
+  const itemsRef = useRef<FallingItem[]>([]);
   const basketXRef = useRef<number>(0);
   const keysRef = useRef<Set<string>>(new Set());
   const touchStartRef = useRef<number | null>(null);
-  const eggIdCounter = useRef(0);
+  const itemIdCounter = useRef(0);
 
   const [gameState, setGameState] = useState<GameState>({
     score: 0,
     lives: GAME_CONFIG.INITIAL_LIVES,
+    maxLives: GAME_CONFIG.MAX_LIVES,
     isPlaying: false,
     isGameOver: false,
     level: 1,
     highScore: parseInt(localStorage.getItem('eggCatchHighScore') || '0'),
   });
 
-  const [eggs, setEggs] = useState<Egg[]>([]);
+  const [items, setItems] = useState<FallingItem[]>([]);
   const [basketX, setBasketX] = useState(0);
-  const [catchEffect, setCatchEffect] = useState<{ x: number; y: number; id: number } | null>(null);
+  const [catchEffects, setCatchEffects] = useState<BonusEffect[]>([]);
   const [missEffect, setMissEffect] = useState<{ x: number; id: number } | null>(null);
+  const [screenFlash, setScreenFlash] = useState<string | null>(null);
 
   const getGameArea = useCallback(() => {
     if (!gameAreaRef.current) return { width: 800, height: 600 };
@@ -64,40 +102,62 @@ function App() {
     };
   }, []);
 
-  const spawnEgg = useCallback(() => {
+  const getRandomItemType = (): ItemType => {
+    const roll = Math.random() * 100;
+    if (roll < GAME_CONFIG.STAR_CHANCE) return 'star';
+    if (roll < GAME_CONFIG.STAR_CHANCE + GAME_CONFIG.GOLDEN_EGG_CHANCE) return 'golden_egg';
+    if (roll < GAME_CONFIG.STAR_CHANCE + GAME_CONFIG.GOLDEN_EGG_CHANCE + GAME_CONFIG.HEART_CHANCE) return 'heart';
+    return 'egg';
+  };
+
+  const spawnItem = useCallback(() => {
     const { width } = getGameArea();
     const level = gameState.level;
-    const speed = GAME_CONFIG.BASE_SPEED + Math.random() * (GAME_CONFIG.MAX_SPEED - GAME_CONFIG.BASE_SPEED) * (1 + level * 0.15);
-    const size = GAME_CONFIG.EGG_SIZE + Math.random() * 8 - 4;
+    const type = getRandomItemType();
+    const isBonus = type !== 'egg';
+    const baseSpeed = GAME_CONFIG.BASE_SPEED + Math.random() * (GAME_CONFIG.MAX_SPEED - GAME_CONFIG.BASE_SPEED) * (1 + level * 0.15);
+    // Бонусы падают чуть медленнее, чтобы их было легче поймать
+    const speed = isBonus ? baseSpeed * 0.7 : baseSpeed;
+    const size = GAME_CONFIG.EGG_SIZE * ITEM_SIZE_MULTIPLIER[type] + Math.random() * 8 - 4;
 
-    const newEgg: Egg = {
-      id: eggIdCounter.current++,
+    const newItem: FallingItem = {
+      id: itemIdCounter.current++,
       x: Math.random() * (width - size),
       y: -size,
       speed,
       size,
       rotation: Math.random() * 360,
-      rotationSpeed: (Math.random() - 0.5) * 4,
+      rotationSpeed: (Math.random() - 0.5) * (isBonus ? 2 : 4),
+      type,
+      glow: isBonus,
     };
 
-    eggsRef.current = [...eggsRef.current, newEgg];
+    itemsRef.current = [...itemsRef.current, newItem];
   }, [gameState.level, getGameArea]);
 
-  const checkCollision = useCallback((egg: Egg, bX: number): boolean => {
+  const checkCollision = useCallback((item: FallingItem, bX: number): boolean => {
     const { height } = getGameArea();
     const basketTop = height - GAME_CONFIG.BASKET_HEIGHT - 10;
     const basketLeft = bX;
     const basketRight = bX + GAME_CONFIG.BASKET_WIDTH;
-    const eggCenterX = egg.x + egg.size / 2;
-    const eggBottom = egg.y + egg.size;
+    const itemCenterX = item.x + item.size / 2;
+    const itemBottom = item.y + item.size;
 
     return (
-      eggBottom >= basketTop &&
-      eggBottom <= basketTop + GAME_CONFIG.BASKET_HEIGHT / 2 &&
-      eggCenterX >= basketLeft &&
-      eggCenterX <= basketRight
+      itemBottom >= basketTop &&
+      itemBottom <= basketTop + GAME_CONFIG.BASKET_HEIGHT / 2 &&
+      itemCenterX >= basketLeft &&
+      itemCenterX <= basketRight
     );
   }, [getGameArea]);
+
+  const addCatchEffect = useCallback((x: number, y: number, type: ItemType, text: string) => {
+    const effect: BonusEffect = { x, y, id: Date.now() + Math.random(), type, text };
+    setCatchEffects(prev => [...prev, effect]);
+    setTimeout(() => {
+      setCatchEffects(prev => prev.filter(e => e.id !== effect.id));
+    }, 800);
+  }, []);
 
   const gameLoop = useCallback((timestamp: number) => {
     if (!gameState.isPlaying) return;
@@ -113,50 +173,86 @@ function App() {
     }
     setBasketX(basketXRef.current);
 
-    // Spawn eggs
+    // Spawn items
     const spawnInterval = Math.max(
       GAME_CONFIG.MIN_SPAWN_INTERVAL,
       GAME_CONFIG.EGG_SPAWN_INTERVAL - gameState.level * 80
     );
 
     if (timestamp - lastSpawnRef.current > spawnInterval) {
-      spawnEgg();
+      spawnItem();
       lastSpawnRef.current = timestamp;
     }
 
-    // Update eggs
-    let caught = 0;
+    // Update items
+    let eggsCaught = 0;
+    let heartsCaught = 0;
+    let goldenEggsCaught = 0;
+    let starsCaught = 0;
     let missed = 0;
     let missX = 0;
 
-    eggsRef.current = eggsRef.current.filter((egg) => {
-      egg.y += egg.speed;
-      egg.rotation += egg.rotationSpeed;
+    itemsRef.current = itemsRef.current.filter((item) => {
+      item.y += item.speed;
+      item.rotation += item.rotationSpeed;
 
       // Check collision with basket
-      if (checkCollision(egg, basketXRef.current)) {
-        caught++;
-        setCatchEffect({ x: egg.x, y: height - GAME_CONFIG.BASKET_HEIGHT - 20, id: egg.id });
-        setTimeout(() => setCatchEffect(null), 300);
+      if (checkCollision(item, basketXRef.current)) {
+        switch (item.type) {
+          case 'egg':
+            eggsCaught++;
+            addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'egg', '+1');
+            break;
+          case 'heart':
+            heartsCaught++;
+            addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'heart', '+❤️');
+            setScreenFlash('pink');
+            setTimeout(() => setScreenFlash(null), 300);
+            break;
+          case 'golden_egg':
+            goldenEggsCaught++;
+            addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'golden_egg', '+5⭐');
+            setScreenFlash('gold');
+            setTimeout(() => setScreenFlash(null), 300);
+            break;
+          case 'star':
+            starsCaught++;
+            addCatchEffect(item.x, height - GAME_CONFIG.BASKET_HEIGHT - 20, 'star', '+10⭐ +❤️');
+            setScreenFlash('yellow');
+            setTimeout(() => setScreenFlash(null), 400);
+            break;
+        }
         return false;
       }
 
-      // Check if egg fell off screen
-      if (egg.y > height) {
-        missed++;
-        missX = egg.x;
+      // Check if item fell off screen - только обычные яйца снимают жизни
+      if (item.y > height) {
+        if (item.type === 'egg') {
+          missed++;
+          missX = item.x;
+        }
         return false;
       }
 
       return true;
     });
 
-    setEggs([...eggsRef.current]);
+    setItems([...itemsRef.current]);
 
-    if (caught > 0 || missed > 0) {
+    const totalCaught = eggsCaught + heartsCaught + goldenEggsCaught + starsCaught;
+    if (totalCaught > 0 || missed > 0) {
       setGameState((prev) => {
-        const newScore = prev.score + caught;
-        const newLives = prev.lives - missed;
+        // Подсчёт очков
+        const pointsFromEggs = eggsCaught * 1;
+        const pointsFromGolden = goldenEggsCaught * GAME_CONFIG.GOLDEN_EGG_POINTS;
+        const pointsFromStars = starsCaught * GAME_CONFIG.STAR_POINTS;
+        const newScore = prev.score + pointsFromEggs + pointsFromGolden + pointsFromStars;
+
+        // Подсчёт жизней
+        const healFromHearts = heartsCaught * GAME_CONFIG.HEART_HEAL;
+        const healFromStars = starsCaught * 1; // Звезда тоже лечит
+        const totalHeal = healFromHearts + healFromStars;
+        const newLives = Math.min(prev.maxLives, prev.lives - missed + totalHeal);
         const newLevel = Math.floor(newScore / GAME_CONFIG.LEVEL_THRESHOLD) + 1;
 
         if (missed > 0) {
@@ -188,11 +284,12 @@ function App() {
     }
 
     animationFrameRef.current = requestAnimationFrame(gameLoop);
-  }, [gameState.isPlaying, gameState.level, getGameArea, spawnEgg, checkCollision]);
+  }, [gameState.isPlaying, gameState.level, getGameArea, spawnItem, checkCollision, addCatchEffect]);
 
   const startGame = useCallback(() => {
-    eggsRef.current = [];
-    setEggs([]);
+    itemsRef.current = [];
+    setItems([]);
+    setCatchEffects([]);
     basketXRef.current = getGameArea().width / 2 - GAME_CONFIG.BASKET_WIDTH / 2;
     setBasketX(basketXRef.current);
     lastSpawnRef.current = 0;
@@ -200,6 +297,7 @@ function App() {
     setGameState((prev) => ({
       score: 0,
       lives: GAME_CONFIG.INITIAL_LIVES,
+      maxLives: GAME_CONFIG.MAX_LIVES,
       isPlaying: true,
       isGameOver: false,
       level: 1,
@@ -288,6 +386,36 @@ function App() {
     return () => window.removeEventListener('resize', initPosition);
   }, [getGameArea]);
 
+  const getItemStyle = (item: FallingItem) => {
+    const baseStyle = {
+      left: item.x + 'px',
+      top: item.y + 'px',
+      width: item.size + 'px',
+      height: item.size + 'px',
+      transform: `rotate(${item.rotation}deg)`,
+      fontSize: item.size * 0.85 + 'px',
+      lineHeight: 1,
+    };
+
+    if (item.glow) {
+      const glowColors: Record<string, string> = {
+        heart: 'drop-shadow(0 0 8px rgba(239,68,68,0.8)) drop-shadow(0 0 16px rgba(239,68,68,0.4))',
+        golden_egg: 'drop-shadow(0 0 10px rgba(234,179,8,0.9)) drop-shadow(0 0 20px rgba(234,179,8,0.5))',
+        star: 'drop-shadow(0 0 10px rgba(250,204,21,0.9)) drop-shadow(0 0 20px rgba(250,204,21,0.5))',
+      };
+      return {
+        ...baseStyle,
+        filter: glowColors[item.type] || 'none',
+        animation: 'pulse 1s ease-in-out infinite',
+      };
+    }
+
+    return {
+      ...baseStyle,
+      filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
+    };
+  };
+
   return (
     <div className="w-full h-screen overflow-hidden flex flex-col items-center justify-center bg-gradient-to-b from-sky-900 via-indigo-900 to-purple-950 select-none">
       {/* Stars background */}
@@ -311,21 +439,21 @@ function App() {
 
       {/* Header */}
       <div className="w-full max-w-2xl px-4 py-3 flex items-center justify-between z-10">
-        <div className="flex items-center gap-4">
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl px-4 py-2 border border-white/20">
-            <span className="text-yellow-300 text-sm font-medium">⭐ Счёт</span>
-            <span className="text-white text-xl font-bold ml-2">{gameState.score}</span>
+        <div className="flex items-center gap-3">
+          <div className="bg-white/10 backdrop-blur-sm rounded-xl px-3 py-2 border border-white/20">
+            <span className="text-yellow-300 text-xs font-medium">⭐ Счёт</span>
+            <span className="text-white text-lg font-bold ml-2">{gameState.score}</span>
           </div>
-          <div className="bg-white/10 backdrop-blur-sm rounded-xl px-4 py-2 border border-white/20">
-            <span className="text-purple-300 text-sm font-medium">📊 Уровень</span>
-            <span className="text-white text-xl font-bold ml-2">{gameState.level}</span>
+          <div className="bg-white/10 backdrop-blur-sm rounded-xl px-3 py-2 border border-white/20">
+            <span className="text-purple-300 text-xs font-medium">📊 Ур.</span>
+            <span className="text-white text-lg font-bold ml-1">{gameState.level}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          {Array.from({ length: GAME_CONFIG.INITIAL_LIVES }).map((_, i) => (
+        <div className="flex items-center gap-1">
+          {Array.from({ length: gameState.maxLives }).map((_, i) => (
             <span
               key={i}
-              className={`text-2xl transition-all duration-300 ${
+              className={`text-xl transition-all duration-300 ${
                 i < gameState.lives ? 'scale-100 opacity-100' : 'scale-50 opacity-30 grayscale'
               }`}
             >
@@ -343,42 +471,57 @@ function App() {
           background: 'linear-gradient(180deg, rgba(30,41,59,0.8) 0%, rgba(51,65,85,0.6) 50%, rgba(34,197,94,0.3) 100%)',
         }}
       >
+        {/* Screen flash effect */}
+        {screenFlash && (
+          <div
+            className="absolute inset-0 z-30 pointer-events-none animate-pulse"
+            style={{
+              background: screenFlash === 'pink'
+                ? 'radial-gradient(circle, rgba(239,68,68,0.3) 0%, transparent 70%)'
+                : screenFlash === 'gold'
+                ? 'radial-gradient(circle, rgba(234,179,8,0.3) 0%, transparent 70%)'
+                : 'radial-gradient(circle, rgba(250,204,21,0.4) 0%, transparent 70%)',
+            }}
+          />
+        )}
+
         {/* Ground */}
         <div className="absolute bottom-0 left-0 right-0 h-3 bg-gradient-to-t from-green-800 to-green-600 opacity-60" />
 
-        {/* Eggs */}
-        {eggs.map((egg) => (
+        {/* Falling Items */}
+        {items.map((item) => (
           <div
-            key={egg.id}
+            key={item.id}
             className="absolute transition-none pointer-events-none"
-            style={{
-              left: egg.x + 'px',
-              top: egg.y + 'px',
-              width: egg.size + 'px',
-              height: egg.size + 'px',
-              transform: `rotate(${egg.rotation}deg)`,
-              fontSize: egg.size * 0.85 + 'px',
-              lineHeight: 1,
-              filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
-            }}
+            style={getItemStyle(item)}
           >
-            🥚
+            {ITEM_EMOJI[item.type]}
           </div>
         ))}
 
-        {/* Catch Effect */}
-        {catchEffect && (
+        {/* Catch Effects */}
+        {catchEffects.map((effect) => (
           <div
-            className="absolute pointer-events-none animate-ping"
+            key={effect.id}
+            className="absolute pointer-events-none z-20"
             style={{
-              left: catchEffect.x + 'px',
-              top: catchEffect.y + 'px',
-              fontSize: '24px',
+              left: effect.x + 'px',
+              top: effect.y + 'px',
+              animation: 'floatUp 0.8s ease-out forwards',
             }}
           >
-            ✨
+            <div className={`text-lg font-bold whitespace-nowrap ${
+              effect.type === 'heart' ? 'text-red-400' :
+              effect.type === 'golden_egg' ? 'text-yellow-400' :
+              effect.type === 'star' ? 'text-amber-300' :
+              'text-green-400'
+            }`}
+            style={{ textShadow: '0 0 10px currentColor' }}
+            >
+              {effect.text}
+            </div>
           </div>
-        )}
+        ))}
 
         {/* Miss Effect */}
         {missEffect && (
@@ -409,15 +552,39 @@ function App() {
         {/* Start Screen */}
         {!gameState.isPlaying && !gameState.isGameOver && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/50 backdrop-blur-sm z-20">
-            <div className="text-center p-8">
+            <div className="text-center p-6 max-w-md mx-4">
               <div className="text-6xl mb-4 animate-bounce">🥚</div>
-              <h1 className="text-4xl md:text-5xl font-bold text-white mb-3 drop-shadow-lg">
+              <h1 className="text-3xl md:text-5xl font-bold text-white mb-3 drop-shadow-lg">
                 Поймай Яйцо!
               </h1>
-              <p className="text-white/80 text-lg mb-2">
+              <p className="text-white/80 text-base mb-4">
                 Лови яйца корзиной, не дай им упасть!
               </p>
-              <p className="text-white/60 text-sm mb-6">
+              
+              {/* Bonus items legend */}
+              <div className="bg-white/10 rounded-xl p-3 mb-5 border border-white/20">
+                <p className="text-white/70 text-xs mb-2 font-medium">✨ Бонусные предметы:</p>
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">❤️</span>
+                    <span className="text-white/80 text-xs">+1 жизнь</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🌟</span>
+                    <span className="text-white/80 text-xs">+5 очков</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">⭐</span>
+                    <span className="text-white/80 text-xs">+10 очков +❤️</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🥚</span>
+                    <span className="text-white/80 text-xs">+1 очко</span>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-white/60 text-sm mb-5">
                 ← → или касание для управления
               </p>
               {gameState.highScore > 0 && (
@@ -431,7 +598,7 @@ function App() {
               >
                 🎮 Начать игру
               </button>
-              <p className="text-white/40 text-xs mt-4">
+              <p className="text-white/40 text-xs mt-3">
                 или нажмите Пробел
               </p>
             </div>
@@ -441,12 +608,12 @@ function App() {
         {/* Game Over Screen */}
         {gameState.isGameOver && (
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm z-20">
-            <div className="text-center p-8 bg-white/10 rounded-3xl border border-white/20 backdrop-blur-md max-w-sm mx-4">
+            <div className="text-center p-6 bg-white/10 rounded-3xl border border-white/20 backdrop-blur-md max-w-sm mx-4">
               <div className="text-5xl mb-4">😢</div>
               <h2 className="text-3xl md:text-4xl font-bold text-white mb-2">
                 Игра окончена!
               </h2>
-              <div className="space-y-2 my-6">
+              <div className="space-y-2 my-5">
                 <p className="text-white text-xl">
                   Счёт: <span className="text-yellow-300 font-bold">{gameState.score}</span>
                 </p>
@@ -480,6 +647,28 @@ function App() {
       <div className="text-white/40 text-xs pb-2 text-center z-10">
         Используй ← → или двигай пальцем по экрану
       </div>
+
+      {/* Custom keyframes */}
+      <style>{`
+        @keyframes floatUp {
+          0% {
+            transform: translateY(0) scale(1);
+            opacity: 1;
+          }
+          100% {
+            transform: translateY(-60px) scale(1.3);
+            opacity: 0;
+          }
+        }
+        @keyframes pulse {
+          0%, 100% {
+            transform: scale(1);
+          }
+          50% {
+            transform: scale(1.15);
+          }
+        }
+      `}</style>
     </div>
   );
 }
