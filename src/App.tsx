@@ -59,6 +59,8 @@ const GAME_CONFIG = {
   BLACK_POINTS: -3,
   STAR_POINTS: 10,
   HEART_HEAL: 1,
+  // Длительность неуязвимости после потери жизни (мс)
+  INVULNERABLE_DURATION: 2500,
 };
 
 const ITEM_EMOJI: Record<ItemType, string> = {
@@ -92,6 +94,7 @@ function App() {
   const keysRef = useRef<Set<string>>(new Set());
   const touchStartRef = useRef<number | null>(null);
   const itemIdCounter = useRef(0);
+  const invulnerableUntilRef = useRef<number>(0);
 
   const [gameState, setGameState] = useState<GameState>({
     score: 0,
@@ -108,6 +111,8 @@ function App() {
   const [catchEffects, setCatchEffects] = useState<BonusEffect[]>([]);
   const [missEffect, setMissEffect] = useState<{ x: number; id: number } | null>(null);
   const [screenFlash, setScreenFlash] = useState<string | null>(null);
+  const [isInvulnerable, setIsInvulnerable] = useState(false);
+  const [invulnerableFlash, setInvulnerableFlash] = useState(false);
 
   const getGameArea = useCallback(() => {
     if (!gameAreaRef.current) return { width: 800, height: 600 };
@@ -282,8 +287,11 @@ function App() {
       // Check if item fell off screen - только обычные яйца снимают жизни
       if (item.y > height) {
         if (item.type === 'egg') {
-          missed++;
-          missX = item.x;
+          const isInvulnerableNow = Date.now() < invulnerableUntilRef.current;
+          if (!isInvulnerableNow) {
+            missed++;
+            missX = item.x;
+          }
         }
         return false;
       }
@@ -316,6 +324,13 @@ function App() {
         if (missed > 0) {
           setMissEffect({ x: missX, id: Date.now() });
           setTimeout(() => setMissEffect(null), 500);
+          // Активируем неуязвимость после потери жизни
+          invulnerableUntilRef.current = Date.now() + GAME_CONFIG.INVULNERABLE_DURATION;
+          setIsInvulnerable(true);
+          setTimeout(() => {
+            invulnerableUntilRef.current = 0;
+            setIsInvulnerable(false);
+          }, GAME_CONFIG.INVULNERABLE_DURATION);
         }
 
         if (newLives <= 0) {
@@ -351,6 +366,9 @@ function App() {
     basketXRef.current = getGameArea().width / 2 - GAME_CONFIG.BASKET_WIDTH / 2;
     setBasketX(basketXRef.current);
     lastSpawnRef.current = 0;
+    invulnerableUntilRef.current = 0;
+    setIsInvulnerable(false);
+    setInvulnerableFlash(false);
 
     setGameState((prev) => ({
       score: 0,
@@ -431,6 +449,18 @@ function App() {
       }
     };
   }, [gameState.isPlaying, gameLoop]);
+
+  // Мигание во время неуязвимости
+  useEffect(() => {
+    if (!isInvulnerable) {
+      setInvulnerableFlash(false);
+      return;
+    }
+    const interval = setInterval(() => {
+      setInvulnerableFlash(prev => !prev);
+    }, 200);
+    return () => clearInterval(interval);
+  }, [isInvulnerable]);
 
   // Initialize basket position
   useEffect(() => {
@@ -550,11 +580,39 @@ function App() {
       {/* Game Area */}
       <div
         ref={gameAreaRef}
-        className="relative w-full max-w-2xl flex-1 mx-4 mb-4 rounded-2xl overflow-hidden border-2 border-white/20 shadow-2xl"
+        className={`relative w-full max-w-2xl flex-1 mx-4 mb-4 rounded-2xl overflow-hidden border-2 shadow-2xl transition-all duration-150 ${
+          isInvulnerable && invulnerableFlash
+            ? 'border-yellow-400 shadow-yellow-400/60'
+            : isInvulnerable
+            ? 'border-green-400 shadow-green-400/40'
+            : 'border-white/20'
+        }`}
         style={{
-          background: 'linear-gradient(180deg, rgba(30,41,59,0.8) 0%, rgba(51,65,85,0.6) 50%, rgba(34,197,94,0.3) 100%)',
+          background: isInvulnerable && invulnerableFlash
+            ? 'linear-gradient(180deg, rgba(250,204,21,0.15) 0%, rgba(34,197,94,0.15) 50%, rgba(34,197,94,0.3) 100%)'
+            : 'linear-gradient(180deg, rgba(30,41,59,0.8) 0%, rgba(51,65,85,0.6) 50%, rgba(34,197,94,0.3) 100%)',
         }}
       >
+        {/* Invulnerability overlay */}
+        {isInvulnerable && (
+          <div
+            className="absolute inset-0 pointer-events-none z-10 transition-opacity duration-150"
+            style={{
+              background: invulnerableFlash
+                ? 'radial-gradient(circle at center, rgba(250,204,21,0.12) 0%, transparent 60%)'
+                : 'radial-gradient(circle at center, rgba(34,197,94,0.08) 0%, transparent 60%)',
+              boxShadow: invulnerableFlash
+                ? 'inset 0 0 40px rgba(250,204,21,0.25)'
+                : 'inset 0 0 40px rgba(34,197,94,0.15)',
+            }}
+          />
+        )}
+        {/* Invulnerability indicator */}
+        {isInvulnerable && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-none flex items-center gap-2 bg-black/50 backdrop-blur-sm px-3 py-1 rounded-full border border-yellow-400/50">
+            <span className="text-yellow-300 text-xs font-bold animate-pulse">🛡️ НЕУЯЗВИМОСТЬ</span>
+          </div>
+        )}
         {/* Screen flash effect */}
         {screenFlash && (
           <div
@@ -616,7 +674,12 @@ function App() {
             height: GAME_CONFIG.BASKET_HEIGHT + 'px',
             fontSize: '52px',
             lineHeight: 1,
-            filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.4))',
+            opacity: isInvulnerable ? (invulnerableFlash ? 1 : 0.4) : 1,
+            filter: isInvulnerable
+              ? invulnerableFlash
+                ? 'drop-shadow(0 0 12px rgba(250,204,21,0.9)) drop-shadow(0 4px 6px rgba(0,0,0,0.4))'
+                : 'drop-shadow(0 0 6px rgba(34,197,94,0.7)) drop-shadow(0 4px 6px rgba(0,0,0,0.4))'
+              : 'drop-shadow(0 4px 6px rgba(0,0,0,0.4))',
           }}
         >
           🧺
